@@ -1,2 +1,3 @@
 [workspace]
 members = ["xtask", "xdp-dns-cache", "xdp-dns-cache-common"]
+resolver = "2"
