@@ -1,0 +1,3 @@
+{
+  "rust-analyzer.linkedProjects": ["Cargo.toml", "xdp-dns-cache-ebpf/Cargo.toml"]
+}
