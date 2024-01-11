@@ -85,10 +85,10 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
     }
 
     if should_change {
-        // from XDPeriments xdp_dns_says_no_kern_v3.c
-        // change IPv4 length and UDP length headers
+        // change IPv4 length and UDP length headers and checksums
         let packet_delta = 8;
         let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
+        // Addition would normaly just overflow, so let's check if that would happen
         if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
             let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
             csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
