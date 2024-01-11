@@ -50,12 +50,8 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
         _ => return Err(()),
     };
 
-    info!(
-        &ctx,
-        "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
-    );
-
     let action;
+    let mut should_change = false;
 
     // WARN: make sure to also change MAC addresses in future, the loopback
     // devices uses a MAC of 0x00, so there is no issue when testing against lo
@@ -77,42 +73,57 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                 }
                 _ => return Err(()),
             };
+            should_change = true;
             action = xdp_action::XDP_TX;
+
+            info!(
+                &ctx,
+                "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
+            );
         }
         _ => action = xdp_action::XDP_PASS,
     }
 
-    // from XDPeriments xdp_dns_says_no_kern_v3.c
-    // change IPv4 length and UDP length headers
-    let packet_delta = 8;
-    let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
-    if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
-        let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
-        csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
+    if should_change {
+        // from XDPeriments xdp_dns_says_no_kern_v3.c
+        // change IPv4 length and UDP length headers
+        let packet_delta = 8;
+        let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
+        if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
+            let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
+            csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
 
-        unsafe {
-            (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
-            (*ipv4hdr).check = u16::to_be(csum);
-        }
-
-        match unsafe { (*ipv4hdr).proto } {
-            IpProto::Udp => {
-                let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                unsafe {
-                    (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta);
-                    (*udphdr).check = 0;
-                }
+            unsafe {
+                info!(
+                    &ctx,
+                    "len before: {}, len after: {}, delta: {}",
+                    ipv4_len_old,
+                    ipv4_len_new,
+                    packet_delta
+                );
+                (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
+                (*ipv4hdr).check = u16::to_be(csum);
             }
-            _ => {}
-        };
 
-        // using adjust_tail invalidates all boundschecks priviously done, so this
-        // has to go below the src/dst swaps
-        if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta.into()) } != 0 {
-            info!(&ctx, "adjust_tail failed");
+            match unsafe { (*ipv4hdr).proto } {
+                IpProto::Udp => {
+                    let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                    unsafe {
+                        (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta);
+                        (*udphdr).check = 0;
+                    }
+                }
+                _ => {}
+            };
+
+            // using adjust_tail invalidates all boundschecks priviously done, so this
+            // has to go below the src/dst swaps
+            if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta.into()) } != 0 {
+                info!(&ctx, "adjust_tail failed");
+            }
+        } else {
+            info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta);
         }
-    } else {
-        info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta);
     }
 
     Ok(action)
