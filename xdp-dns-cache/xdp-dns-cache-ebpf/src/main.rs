@@ -3,7 +3,7 @@
 
 use core::mem;
 
-use aya_bpf::{bindings::xdp_action, macros::xdp, programs::XdpContext};
+use aya_bpf::{bindings::xdp_action, helpers::*, macros::xdp, programs::XdpContext};
 use aya_log_ebpf::info;
 use network_types::{
     eth::{EthHdr, EtherType},
@@ -54,7 +54,9 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
         &ctx,
         "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
     );
-    
+
+    let action;
+
     // WARN: make sure to also change MAC addresses in future, the loopback
     // devices uses a MAC of 0x00, so there is no issue when testing against lo
     match source_addr {
@@ -75,10 +77,45 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                 }
                 _ => return Err(()),
             };
-            Ok(xdp_action::XDP_TX)
+            action = xdp_action::XDP_TX;
         }
-        _ => Ok(xdp_action::XDP_PASS),
+        _ => action = xdp_action::XDP_PASS,
     }
+
+    // from XDPeriments xdp_dns_says_no_kern_v3.c
+    // change IPv4 length and UDP length headers
+    let packet_delta = 8;
+    let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
+    if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
+        let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
+        csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
+
+        unsafe {
+            (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
+            (*ipv4hdr).check = u16::to_be(csum);
+        }
+
+        match unsafe { (*ipv4hdr).proto } {
+            IpProto::Udp => {
+                let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                unsafe {
+                    (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta);
+                    (*udphdr).check = 0;
+                }
+            }
+            _ => {}
+        };
+
+        // using adjust_tail invalidates all boundschecks priviously done, so this
+        // has to go below the src/dst swaps
+        if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta.into()) } != 0 {
+            info!(&ctx, "adjust_tail failed");
+        }
+    } else {
+        info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta);
+    }
+
+    Ok(action)
 }
 
 #[panic_handler]
@@ -108,4 +145,51 @@ fn ptr_at_mut<T>(ctx: &XdpContext, offset: usize) -> Result<*mut T, ()> {
     }
 
     Ok((start + offset) as *mut T)
+}
+
+fn csum_replace_u32(mut check: u16, old: u32, new: u32) -> u16 {
+    check = csum_replace(check, (old >> 16) as u16, (new >> 16) as u16);
+    check = csum_replace(check, (old & 0xffff) as u16, (new & 0xffff) as u16);
+    check
+}
+
+// I had used this before in my bachelor thesis
+/*******************************************************************************
+* Title: XDP Tutorial
+* Author: Eelco Chaudron
+* Date: 2019-08-16
+* Availability: https://github.com/xdp-project/xdp-tutorial
+* **************************************************************************/
+// from xdp-tutorial:advanced03-AF_XDP/af_xdp_user.c
+// static inline __sum16 csum16_add(__sum16 csum, __be16 addend) {
+//     uint16_t res = (uint16_t)csum;
+
+//     res += (__u16)addend;
+//     return (__sum16)(res + (res < (__u16)addend));
+// }
+// static inline __sum16 csum16_sub(__sum16 csum, __be16 addend) {
+//     return csum16_add(csum, ~addend);
+// }
+// static inline void csum_replace2(__sum16 *sum, __be16 old, __be16 new) {
+//     *sum = ~csum16_add(csum16_sub(~(*sum), old), new);
+// }
+// The algorithm can also be found in RFC 1624.
+// The Code was modified to fit into rust syntax.
+
+fn csum16_add(csum: u16, addend: u16) -> u16 {
+    let res: u16 = csum;
+    let res = res.wrapping_add(addend);
+    if res < addend {
+        res + 1
+    } else {
+        res
+    }
+}
+
+fn csum16_sub(csum: u16, addend: u16) -> u16 {
+    csum16_add(csum, !addend)
+}
+
+fn csum_replace(check: u16, old: u16, new: u16) -> u16 {
+    !csum16_add(csum16_sub(!check, old), new)
 }
