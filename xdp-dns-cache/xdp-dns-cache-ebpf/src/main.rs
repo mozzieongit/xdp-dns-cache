@@ -93,10 +93,17 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
             let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
             csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
 
+            // I understood the cilium docs that data_end points at the last
+            // byte of the packet, but that is not the case. It points at the
+            // first byte not part of the packet. So there is no need for +1.
+            let complete_len = ctx.data_end() - ctx.data();
+
             unsafe {
                 info!(
                     &ctx,
-                    "len before: {}, len after: {}, delta: {}",
+                    "ctx.len: {} + delta = {} || ipv4 len before: {}, ipv4 len after: {}, delta: {}",
+                    complete_len,
+                    complete_len + packet_delta as usize,
                     ipv4_len_old,
                     ipv4_len_new,
                     packet_delta
