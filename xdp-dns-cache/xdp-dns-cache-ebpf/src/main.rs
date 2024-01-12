@@ -21,7 +21,7 @@ pub fn xdp_dns_cache(ctx: XdpContext) -> u32 {
 }
 
 fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
-    let ethhdr: *const EthHdr = ptr_at(&ctx, 0)?;
+    let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
 
     match unsafe { (*ethhdr).ether_type } {
         EtherType::Ipv4 => {}
@@ -31,6 +31,7 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
+    let mut is_udp = false;
 
     let (source_port, dest_port) = match unsafe { (*ipv4hdr).proto } {
         IpProto::Tcp => {
@@ -41,6 +42,7 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
             )
         }
         IpProto::Udp => {
+            is_udp = true;
             let udphdr: *const UdpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
             (
                 u16::from_be(unsafe { (*udphdr).source }),
@@ -50,38 +52,42 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
         _ => return Err(()),
     };
 
-    let action;
+    let mut action = xdp_action::XDP_PASS;
     let mut should_change = false;
 
-    // WARN: make sure to also change MAC addresses in future, the loopback
-    // devices uses a MAC of 0x00, so there is no issue when testing against lo
-    match source_addr {
-        // source == 127.0.0.2
-        0x7f000002 => {
-            info!(&ctx, "Changing and returning the packet");
-            unsafe {
-                (*ipv4hdr).dst_addr = u32::to_be(source_addr);
-                (*ipv4hdr).src_addr = u32::to_be(dest_addr);
-            };
-            match unsafe { (*ipv4hdr).proto } {
-                IpProto::Udp => {
-                    let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                    unsafe {
-                        (*udphdr).source = u16::to_be(dest_port);
-                        (*udphdr).dest = u16::to_be(source_port);
+    if is_udp {
+        match source_addr {
+            // source == 127.0.0.2
+            0x7f000002 | 0x0a010101 => {
+                info!(&ctx, "Changing and returning the packet");
+                unsafe {
+                    (*ipv4hdr).dst_addr = u32::to_be(source_addr);
+                    (*ipv4hdr).src_addr = u32::to_be(dest_addr);
+                    // change ethernet mac addresses
+                    let tmp_eth_addr_endian = (*ethhdr).src_addr;
+                    (*ethhdr).src_addr = (*ethhdr).dst_addr;
+                    (*ethhdr).dst_addr = tmp_eth_addr_endian;
+                };
+                match unsafe { (*ipv4hdr).proto } {
+                    IpProto::Udp => {
+                        let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                        unsafe {
+                            (*udphdr).source = u16::to_be(dest_port);
+                            (*udphdr).dest = u16::to_be(source_port);
+                        }
                     }
-                }
-                _ => return Err(()),
-            };
-            should_change = true;
-            action = xdp_action::XDP_TX;
+                    _ => return Err(()),
+                };
+                should_change = true;
+                action = xdp_action::XDP_TX;
 
-            info!(
-                &ctx,
-                "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
-            );
+                info!(
+                    &ctx,
+                    "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
+                    );
+            }
+            _ => {},
         }
-        _ => action = xdp_action::XDP_PASS,
     }
 
     if should_change {
