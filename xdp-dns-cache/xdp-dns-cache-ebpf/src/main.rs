@@ -86,7 +86,12 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
 
     if should_change {
         // change IPv4 length and UDP length headers and checksums
-        let packet_delta = 8;
+        // let packet_delta = 364; // dig . NS
+        // let packet_delta = 362; // dig a. NS
+        // let packet_delta = 300;
+        // let packet_delta = 982; // dig . NS +padding=446
+        // let packet_delta = 916; // dig . NS +padding=512
+        let packet_delta = 1980; // virtio_net
         let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
         // Addition would normaly just overflow, so let's check if that would happen
         if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
