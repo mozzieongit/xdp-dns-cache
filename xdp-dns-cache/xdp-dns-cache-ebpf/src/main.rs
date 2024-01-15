@@ -57,7 +57,7 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
 
     if is_udp && dest_port == 53 {
         match source_addr {
-            // source == 127.0.0.2
+            // source == 127.0.0.2 || 10.1.1.1
             0x7f000002 | 0x0a010101 => {
                 info!(&ctx, "Changing and returning the packet");
                 unsafe {
@@ -84,9 +84,9 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                 info!(
                     &ctx,
                     "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
-                    );
+                );
             }
-            _ => {},
+            _ => {}
         }
     }
 
