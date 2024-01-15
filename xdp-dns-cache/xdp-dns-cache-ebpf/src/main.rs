@@ -55,7 +55,7 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
     let mut action = xdp_action::XDP_PASS;
     let mut should_change = false;
 
-    if is_udp {
+    if is_udp && dest_port == 53 {
         match source_addr {
             // source == 127.0.0.2
             0x7f000002 | 0x0a010101 => {
