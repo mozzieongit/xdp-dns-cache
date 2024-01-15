@@ -28,6 +28,17 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
         _ => return Ok(xdp_action::XDP_PASS),
     }
 
+    // from aya book:
+    // "As there is limited stack space, it's more memory efficient to use the offset_of! macro to
+    // read a single field from a struct, rather than reading the whole struct and accessing the
+    // field by name."
+    // My interpretation is that when e.g. I only what the IPv4 src_addr I could do something like:
+    // #![feature(offset_of)] // at top of file
+    // let source_addr = u32::from_be(unsafe {
+    //   *( ptr_at(&ctx, EthHdr::LEN + mem::offset_of!(Ipv4Hdr, src_addr))? as *const u32 )
+    // });
+    // Which would save some stack space, as I reference a pointer and don't store the full struct.
+
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
