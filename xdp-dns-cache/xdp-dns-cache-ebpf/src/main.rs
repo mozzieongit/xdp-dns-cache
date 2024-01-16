@@ -44,6 +44,9 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
     let mut is_udp = false;
 
+    // FIXME: should we also check IPv4 IHL to verify that no options are used which would mess up
+    // our arithmetics?
+
     let (source_port, dest_port) = match unsafe { (*ipv4hdr).proto } {
         IpProto::Tcp => {
             let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
@@ -108,8 +111,8 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
         // let packet_delta = 300;
         // let packet_delta = 982; // dig . NS +padding=446
         // let packet_delta = 916; // dig . NS +padding=512
-        // let packet_delta = 3426; // virtio_net
-        let packet_delta = 364; // bern tg3 dig . NS
+        let packet_delta = 3426; // virtio_net
+        // let packet_delta = 364; // bern tg3 dig . NS
         let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
         // Addition would normaly just overflow, so let's check if that would happen
         if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
