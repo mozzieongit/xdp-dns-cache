@@ -58,40 +58,18 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
 
     // to not disrupt DNS on the dev system completely
     // only include the match block in debug builds, not in release builds
-    #[cfg(debug_assertions)]
     match source_addr {
         // source == 127.0.0.2 || 10.1.1.1
         0x7f000002 | 0x0a010101 => {
-            #[cfg(debug_assertions)]
-            info!(&ctx, "Changing and returning the packet");
-
             let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
             swap_ipv4_addr(ipv4hdr);
             swap_eth_addr(ethhdr);
             swap_udp_ports(udphdr);
 
             change_len_and_checksums(ctx, ipv4hdr, udphdr)?;
-            should_change = true;
             action = xdp_action::XDP_TX;
-
-            info!(
-                &ctx,
-                "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
-            );
         }
         _ => {}
-    }
-
-    // for release build
-    #[cfg(not(debug_assertions))]
-    {
-        let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
-        swap_ipv4_addr(ipv4hdr);
-        swap_eth_addr(ethhdr);
-        swap_udp_ports(udphdr);
-
-        change_len_and_checksums(ctx, ipv4hdr, udphdr)?;
-        action = xdp_action::XDP_TX;
     }
 
     Ok(action)
