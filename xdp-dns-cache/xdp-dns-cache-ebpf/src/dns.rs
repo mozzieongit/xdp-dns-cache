@@ -41,6 +41,26 @@ impl DnsHdr {
     pub fn arcount(&self) -> u16 {
         (self.arcount << 8) + (self.arcount >> 8)
     }
+
+    pub fn set_id(&mut self, id: u16) {
+        self.id = (id << 8) + (id >> 8)
+    }
+
+    pub fn set_qdcount(&mut self, count: u16) {
+        self.qdcount = (count << 8) + (count >> 8)
+    }
+
+    pub fn set_ancount(&mut self, count: u16) {
+        self.ancount = (count << 8) + (count >> 8)
+    }
+
+    pub fn set_nscount(&mut self, count: u16) {
+        self.nscount = (count << 8) + (count >> 8)
+    }
+
+    pub fn set_arcount(&mut self, count: u16) {
+        self.arcount = (count << 8) + (count >> 8)
+    }
 }
 
 pub const DNS_PORT: u16 = 53;
