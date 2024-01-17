@@ -106,16 +106,25 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
 
     if should_change {
         // change IPv4 length and UDP length headers and checksums
-        // let packet_delta = 364; // dig . NS
-        // let packet_delta = 362; // dig a. NS
-        // let packet_delta = 300;
-        // let packet_delta = 982; // dig . NS +padding=446
-        // let packet_delta = 916; // dig . NS +padding=512
-        let packet_delta = 3426; // virtio_net
-        // let packet_delta = 364; // bern tg3 dig . NS
+
+        // max move to front for virtio_net = -224
+        // max move to front for xdpgeneric (loopback) = -218
+        let packet_delta_head = 218; // loopback/xdpgeneric
+        // let packet_delta_head = 224; // virtio_net
+
+        let packet_delta_tail = 364; // dig . NS
+        // let packet_delta_tail = 362; // dig a. NS
+        // let packet_delta_tail = 300;
+        // let packet_delta_tail = 982; // dig . NS +padding=446
+        // let packet_delta_tail = 916; // dig . NS +padding=512
+        // let packet_delta_tail = 3426; // virtio_net
+        // let packet_delta_tail = 364; // bern tg3 dig . NS
+
+        let packet_delta_full = packet_delta_head + packet_delta_tail;
+
         let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
-        // Addition would normaly just overflow, so let's check if that would happen
-        if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta) {
+        // Addition would normaly just overflow, so let's check if that would happen, just in case
+        if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta_full) {
             let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
             csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
 
@@ -129,10 +138,10 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                     &ctx,
                     "ctx.len: {} + delta = {} || ipv4 len before: {}, ipv4 len after: {}, delta: {}",
                     complete_len,
-                    complete_len + packet_delta as usize,
+                    complete_len + packet_delta_full as usize,
                     ipv4_len_old,
                     ipv4_len_new,
-                    packet_delta
+                    packet_delta_full
                 );
                 (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
                 (*ipv4hdr).check = u16::to_be(csum);
@@ -142,7 +151,7 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                 IpProto::Udp => {
                     let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
                     unsafe {
-                        (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta);
+                        (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta_full);
                         (*udphdr).check = 0;
                     }
                 }
@@ -151,11 +160,29 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
 
             // using adjust_tail invalidates all boundschecks priviously done, so this
             // has to go below the src/dst swaps
-            if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta.into()) } != 0 {
+            if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta_tail.into()) } != 0 {
                 info!(&ctx, "adjust_tail failed");
             }
+
+            let frame_size_before_adjust_head = ctx.data_end() - ctx.data();
+            // convert packet_delta_head to i32 as needed for function, and negate for move to front
+            if unsafe { bpf_xdp_adjust_head(ctx.ctx, -Into::<i32>::into(packet_delta_head)) } != 0 {
+                info!(&ctx, "adjust_head failed");
+            }
+
+            // NOT ALLOWED: "math between pkt pointer and register with unbounded min value is not allowed"
+            // let slice: *mut [u8] = core::ptr::slice_from_raw_parts_mut(ctx.data() as *mut u8, ctx.data_end() - ctx.data());
+            // unsafe { (*slice).rotate_left(packet_delta_head.into()); }
+
+            // let's start with a simple byte-wise move to the front, maybe check later if this
+            // could be improved by copying multiples bytes at once (with u32 or u64)
+            // TODO:
+            // let i = 0;
+            // while i < frame_size_before_adjust_head {
+                // mem::swap() ...
+            // }
         } else {
-            info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta);
+            info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta_tail);
         }
     }
 
