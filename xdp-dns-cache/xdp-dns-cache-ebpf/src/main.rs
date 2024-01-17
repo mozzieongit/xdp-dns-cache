@@ -7,7 +7,7 @@ use aya_bpf::{bindings::xdp_action, helpers::*, macros::xdp, programs::XdpContex
 use aya_log_ebpf::info;
 use network_types::{
     eth::{EthHdr, EtherType},
-    ip::{IpProto, Ipv4Hdr},
+    ip::{IpProto, Ipv4Hdr, Ipv6Hdr},
     tcp::TcpHdr,
     udp::UdpHdr,
 };
@@ -24,172 +24,165 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
     let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
 
     match unsafe { (*ethhdr).ether_type } {
-        EtherType::Ipv4 => {}
-        _ => return Ok(xdp_action::XDP_PASS),
+        EtherType::Ipv4 => do_ipv4(ctx),
+        EtherType::Ipv6 => do_ipv6(ctx),
+        _ => Ok(xdp_action::XDP_PASS),
     }
+}
 
-    // from aya book:
-    // "As there is limited stack space, it's more memory efficient to use the offset_of! macro to
-    // read a single field from a struct, rather than reading the whole struct and accessing the
-    // field by name."
-    // My interpretation is that when e.g. I only what the IPv4 src_addr I could do something like:
-    // #![feature(offset_of)] // at top of file
-    // let source_addr = u32::from_be(unsafe {
-    //   *( ptr_at(&ctx, EthHdr::LEN + mem::offset_of!(Ipv4Hdr, src_addr))? as *const u32 )
-    // });
-    // Which would save some stack space, as I reference a pointer and don't store the full struct.
+fn do_ipv6(ctx: XdpContext) -> Result<u32, ()> {
+    Ok(xdp_action::XDP_PASS)
+}
 
+fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    let mut is_udp = false;
 
     // FIXME: should we also check IPv4 IHL to verify that no options are used which would mess up
     // our arithmetics?
 
-    let (source_port, dest_port) = match unsafe { (*ipv4hdr).proto } {
-        IpProto::Tcp => {
-            let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-            (
-                u16::from_be(unsafe { (*tcphdr).source }),
-                u16::from_be(unsafe { (*tcphdr).dest }),
-            )
-        }
-        IpProto::Udp => {
-            is_udp = true;
-            let udphdr: *const UdpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-            (
-                u16::from_be(unsafe { (*udphdr).source }),
-                u16::from_be(unsafe { (*udphdr).dest }),
-            )
-        }
-        _ => return Err(()),
+    if unsafe { (*ipv4hdr).proto } != IpProto::Udp {
+        return Ok(xdp_action::XDP_PASS);
     };
 
-    let mut action = xdp_action::XDP_PASS;
-    let mut should_change = false;
+    let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+    let source_port = u16::from_be(unsafe { (*udphdr).source });
+    let dest_port = u16::from_be(unsafe { (*udphdr).dest });
 
-    if is_udp && dest_port == 53 {
-        match source_addr {
-            // source == 127.0.0.2 || 10.1.1.1
-            0x7f000002 | 0x0a010101 => {
-                info!(&ctx, "Changing and returning the packet");
-                unsafe {
-                    (*ipv4hdr).dst_addr = u32::to_be(source_addr);
-                    (*ipv4hdr).src_addr = u32::to_be(dest_addr);
-                    // change ethernet mac addresses
-                    let tmp_eth_addr_endian = (*ethhdr).src_addr;
-                    (*ethhdr).src_addr = (*ethhdr).dst_addr;
-                    (*ethhdr).dst_addr = tmp_eth_addr_endian;
-                };
-                match unsafe { (*ipv4hdr).proto } {
-                    IpProto::Udp => {
-                        let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                        unsafe {
-                            (*udphdr).source = u16::to_be(dest_port);
-                            (*udphdr).dest = u16::to_be(source_port);
-                        }
-                    }
-                    _ => return Err(()),
-                };
-                should_change = true;
-                action = xdp_action::XDP_TX;
-
-                info!(
-                    &ctx,
-                    "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
-                );
-            }
-            _ => {}
-        }
+    if dest_port != 53 {
+        return Ok(xdp_action::XDP_PASS);
     }
 
-    if should_change {
-        // change IPv4 length and UDP length headers and checksums
+    let mut action = xdp_action::XDP_PASS;
 
-        // max move to front for virtio_net = -224
-        // max move to front for xdpgeneric (loopback) = -218
-        let packet_delta_head = 218; // loopback/xdpgeneric
-        // let packet_delta_head = 224; // virtio_net
+    // to not disrupt DNS on the dev system completely
+    // only include the match block in debug builds, not in release builds
+    #[cfg(debug_assertions)]
+    match source_addr {
+        // source == 127.0.0.2 || 10.1.1.1
+        0x7f000002 | 0x0a010101 => {
+            #[cfg(debug_assertions)]
+            info!(&ctx, "Changing and returning the packet");
 
-        let packet_delta_tail = 364; // dig . NS
-        // let packet_delta_tail = 362; // dig a. NS
-        // let packet_delta_tail = 300;
-        // let packet_delta_tail = 982; // dig . NS +padding=446
-        // let packet_delta_tail = 916; // dig . NS +padding=512
-        // let packet_delta_tail = 3426; // virtio_net
-        // let packet_delta_tail = 364; // bern tg3 dig . NS
+            let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
+            swap_ipv4_addr(ipv4hdr);
+            swap_eth_addr(ethhdr);
+            swap_udp_ports(udphdr);
 
-        let packet_delta_full = packet_delta_head + packet_delta_tail;
+            change_len_and_checksums(ctx, ipv4hdr, udphdr)?;
+            should_change = true;
+            action = xdp_action::XDP_TX;
 
-        let ipv4_len_old = u16::from_be(unsafe { (*ipv4hdr).tot_len });
-        // Addition would normaly just overflow, so let's check if that would happen, just in case
-        if let Some(ipv4_len_new) = ipv4_len_old.checked_add(packet_delta_full) {
-            let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
-            csum = csum_replace(csum, ipv4_len_old, ipv4_len_new);
-
-            // I understood the cilium docs that data_end points at the last
-            // byte of the packet, but that is not the case. It points at the
-            // first byte not part of the packet. So there is no need for +1.
-            let complete_len = ctx.data_end() - ctx.data();
-
-            unsafe {
-                info!(
-                    &ctx,
-                    "ctx.len: {} + delta = {} || ipv4 len before: {}, ipv4 len after: {}, delta: {}",
-                    complete_len,
-                    complete_len + packet_delta_full as usize,
-                    ipv4_len_old,
-                    ipv4_len_new,
-                    packet_delta_full
-                );
-                (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
-                (*ipv4hdr).check = u16::to_be(csum);
-            }
-
-            match unsafe { (*ipv4hdr).proto } {
-                IpProto::Udp => {
-                    let udphdr: *mut UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                    unsafe {
-                        (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta_full);
-                        (*udphdr).check = 0;
-                    }
-                }
-                _ => {}
-            };
-
-            // let frame_size_before_adjusting = ctx.data_end() - ctx.data();
-
-            // using adjust_tail invalidates all boundschecks priviously done, so this
-            // has to go below the src/dst swaps
-            if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta_tail.into()) } != 0 {
-                info!(&ctx, "adjust_tail failed");
-            }
-
-            // convert packet_delta_head to i32 as needed for function, and negate for move to front of headroom
-            if unsafe { bpf_xdp_adjust_head(ctx.ctx, -Into::<i32>::into(packet_delta_head)) } != 0 {
-                info!(&ctx, "adjust_head failed");
-            }
-
-            // using bounds checks that depend on the packet size/data is NOT ALLOWED
-            // if (ctx.data() + packet_delta_head as usize + frame_size_before_adjusting) < ctx.data_end() {
-            if (ctx.data() + packet_delta_head as usize + 82) < ctx.data_end() {
-                // let val = (ctx.data() + packet_delta_head as usize) as *const u64;
-                // unsafe { *((ctx.data()) as *mut u64) = *val };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (ctx.data() + packet_delta_head as usize) as *const u16,
-                        ctx.data() as *mut u16,
-                        41,
-                    );
-                };
-            }
-        } else {
-            info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta_tail);
+            info!(
+                &ctx,
+                "{:i}:{} => {:i}:{}", source_addr, source_port, dest_addr, dest_port
+            );
         }
+        _ => {}
+    }
+
+    // for release build
+    #[cfg(not(debug_assertions))]
+    {
+        let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
+        swap_ipv4_addr(ipv4hdr);
+        swap_eth_addr(ethhdr);
+        swap_udp_ports(udphdr);
+
+        change_len_and_checksums(ctx, ipv4hdr, udphdr)?;
+        action = xdp_action::XDP_TX;
     }
 
     Ok(action)
+}
+
+fn change_len_and_checksums(
+    ctx: XdpContext,
+    ipv4hdr: *mut Ipv4Hdr,
+    udphdr: *mut UdpHdr,
+) -> Result<u32, ()> {
+    // change IPv4 length and UDP length headers and checksums
+
+    let orig_frame_size = ctx.data_end() - ctx.data();
+    let packet_delta_tail;
+    // let packet_delta_tail = 982; // dig @loopback . NS +padding=446
+    // let packet_delta_tail = 916; // dig @loopback . NS +padding=512
+    // let packet_delta_tail = 3426; // dig @virtio_net . NS
+
+    // TODO: evaluate/prove numbers
+    if orig_frame_size < 176 {
+        // small request frame, max frame size likely 446 bytes.
+        packet_delta_tail = 446 - orig_frame_size as u16; // should work on loopback
+    } else if orig_frame_size < 1470 {
+        // we should get to 1470 and above in the other cases
+        packet_delta_tail = 1470 - orig_frame_size as u16; // should work on loopback
+    } else {
+        info!(
+            &ctx,
+            "there has been a fairly large frame here: {} bytes", orig_frame_size
+        );
+        // TODO: just don't bother with this frame?
+        return Ok(xdp_action::XDP_PASS);
+    }
+
+    let packet_delta = packet_delta_tail;
+    let orig_ipv4_len = u16::from_be(unsafe { (*ipv4hdr).tot_len });
+    let ipv4_len_new = orig_ipv4_len + packet_delta;
+    let mut csum = u16::from_be(unsafe { (*ipv4hdr).check });
+
+    csum = csum_replace(csum, orig_ipv4_len, ipv4_len_new);
+
+    unsafe {
+        info!(
+            &ctx,
+            "ctx.len: {} + delta = {} || ipv4 len before: {}, ipv4 len after: {}, delta: {}",
+            orig_frame_size,
+            orig_frame_size + packet_delta as usize,
+            orig_ipv4_len,
+            ipv4_len_new,
+            packet_delta
+        );
+        (*ipv4hdr).tot_len = u16::to_be(ipv4_len_new);
+        (*ipv4hdr).check = u16::to_be(csum);
+    }
+
+    unsafe {
+        (*udphdr).len = u16::to_be(u16::from_be((*udphdr).len) + packet_delta);
+        (*udphdr).check = 0;
+    }
+
+    // using adjust_tail invalidates all boundschecks priviously done, so this
+    // has to go below the address swaps
+    if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta_tail.into()) } != 0 {
+        info!(&ctx, "adjust_tail failed for tail delta: {}", packet_delta_tail);
+    }
+
+    Ok(xdp_action::XDP_PASS)
+}
+
+fn swap_udp_ports(udphdr: *mut UdpHdr) {
+    unsafe {
+        let src_port_be = (*udphdr).source;
+        (*udphdr).source = (*udphdr).dest;
+        (*udphdr).dest = src_port_be;
+    }
+}
+
+fn swap_eth_addr(ethhdr: *mut EthHdr) {
+    unsafe {
+        let src_addr_be = (*ethhdr).src_addr;
+        (*ethhdr).src_addr = (*ethhdr).dst_addr;
+        (*ethhdr).dst_addr = src_addr_be;
+    }
+}
+
+fn swap_ipv4_addr(ipv4hdr: *mut Ipv4Hdr) {
+    unsafe {
+        let src_addr_be = (*ipv4hdr).src_addr;
+        (*ipv4hdr).src_addr = (*ipv4hdr).dst_addr;
+        (*ipv4hdr).dst_addr = src_addr_be;
+    };
 }
 
 #[panic_handler]
