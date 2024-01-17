@@ -158,29 +158,32 @@ fn try_xdp_dns_cache(ctx: XdpContext) -> Result<u32, ()> {
                 _ => {}
             };
 
+            // let frame_size_before_adjusting = ctx.data_end() - ctx.data();
+
             // using adjust_tail invalidates all boundschecks priviously done, so this
             // has to go below the src/dst swaps
             if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta_tail.into()) } != 0 {
                 info!(&ctx, "adjust_tail failed");
             }
 
-            let frame_size_before_adjust_head = ctx.data_end() - ctx.data();
-            // convert packet_delta_head to i32 as needed for function, and negate for move to front
+            // convert packet_delta_head to i32 as needed for function, and negate for move to front of headroom
             if unsafe { bpf_xdp_adjust_head(ctx.ctx, -Into::<i32>::into(packet_delta_head)) } != 0 {
                 info!(&ctx, "adjust_head failed");
             }
 
-            // NOT ALLOWED: "math between pkt pointer and register with unbounded min value is not allowed"
-            // let slice: *mut [u8] = core::ptr::slice_from_raw_parts_mut(ctx.data() as *mut u8, ctx.data_end() - ctx.data());
-            // unsafe { (*slice).rotate_left(packet_delta_head.into()); }
-
-            // let's start with a simple byte-wise move to the front, maybe check later if this
-            // could be improved by copying multiples bytes at once (with u32 or u64)
-            // TODO:
-            // let i = 0;
-            // while i < frame_size_before_adjust_head {
-                // mem::swap() ...
-            // }
+            // using bounds checks that depend on the packet size/data is NOT ALLOWED
+            // if (ctx.data() + packet_delta_head as usize + frame_size_before_adjusting) < ctx.data_end() {
+            if (ctx.data() + packet_delta_head as usize + 82) < ctx.data_end() {
+                // let val = (ctx.data() + packet_delta_head as usize) as *const u64;
+                // unsafe { *((ctx.data()) as *mut u64) = *val };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        (ctx.data() + packet_delta_head as usize) as *const u16,
+                        ctx.data() as *mut u16,
+                        41,
+                    );
+                };
+            }
         } else {
             info!(&ctx, "Increasing the IPv4 packet length by the desired delta of {} makes it larger than 0xffff", packet_delta_tail);
         }
