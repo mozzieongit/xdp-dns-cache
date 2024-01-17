@@ -8,6 +8,7 @@ aya-bpf = { git = "https://github.com/aya-rs/aya" }
 aya-log-ebpf = { git = "https://github.com/aya-rs/aya" }
 xdp-dns-cache-common = { path = "../xdp-dns-cache-common" }
 network-types = "0.0.5"
+c2rust-bitfields = { version = "0.18.0", features = ["no_std"] }
 
 [[bin]]
 name = "xdp-dns-cache"

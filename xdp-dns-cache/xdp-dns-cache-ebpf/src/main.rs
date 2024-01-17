@@ -8,9 +8,11 @@ use aya_log_ebpf::info;
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr, Ipv6Hdr},
-    tcp::TcpHdr,
     udp::UdpHdr,
 };
+
+mod dns;
+use dns::DnsHdr;
 
 #[xdp]
 pub fn xdp_dns_cache(ctx: XdpContext) -> u32 {
@@ -53,6 +55,30 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
     if dest_port != 53 {
         return Ok(xdp_action::XDP_PASS);
     }
+
+    let dnshdr: *mut DnsHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN)?;
+    unsafe {
+        info!(
+            &ctx,
+            "QR:{}, OPCODE:{}, AA:{}, TC:{}, RD:{}, RA:{}, Z:{}, AD:{}, CD:{}, RCODE:{}, QDCOUNT:{}, ANCOUNT:{}, NSCOUNT:{}, ARCOUNT:{}",
+            (*dnshdr).qr(),
+            (*dnshdr).opcode(),
+            (*dnshdr).aa(),
+            (*dnshdr).tc(),
+            (*dnshdr).rd(),
+            (*dnshdr).ra(),
+            (*dnshdr).z(),
+            (*dnshdr).ad(),
+            (*dnshdr).cd(),
+            (*dnshdr).rcode(),
+            (*dnshdr).qdcount(),
+            (*dnshdr).ancount(),
+            (*dnshdr).nscount(),
+            (*dnshdr).arcount(),
+        );
+    }
+
+    // parse_query();
 
     let mut action = xdp_action::XDP_PASS;
 
