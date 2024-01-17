@@ -88,13 +88,18 @@ fn change_len_and_checksums(
     // let packet_delta_tail = 916; // dig @loopback . NS +padding=512
     // let packet_delta_tail = 3426; // dig @virtio_net . NS
 
+    // should work for now. (loopback on my laptop linux 6.6.10-1-MANJARO)
     // TODO: evaluate/prove numbers
-    if orig_frame_size < 176 {
+    // TODO: get number from map as we can know from the desired answer how much space we need
+    if orig_frame_size < 304 {
         // small request frame, max frame size likely 446 bytes.
-        packet_delta_tail = 446 - orig_frame_size as u16; // should work on loopback
+        packet_delta_tail = 446 - orig_frame_size as u16;
+    } else if orig_frame_size < 500 {
+        // 500 and 580 are arbitrary, but tested, numbers
+        packet_delta_tail = 580 - orig_frame_size as u16;
     } else if orig_frame_size < 1470 {
         // we should get to 1470 and above in the other cases
-        packet_delta_tail = 1470 - orig_frame_size as u16; // should work on loopback
+        packet_delta_tail = 1470 - orig_frame_size as u16;
     } else {
         info!(
             &ctx,
@@ -133,7 +138,10 @@ fn change_len_and_checksums(
     // using adjust_tail invalidates all boundschecks priviously done, so this
     // has to go below the address swaps
     if unsafe { bpf_xdp_adjust_tail(ctx.ctx, packet_delta_tail.into()) } != 0 {
-        info!(&ctx, "adjust_tail failed for tail delta: {}", packet_delta_tail);
+        info!(
+            &ctx,
+            "adjust_tail failed for tail delta: {}", packet_delta_tail
+        );
     }
 
     Ok(xdp_action::XDP_PASS)
