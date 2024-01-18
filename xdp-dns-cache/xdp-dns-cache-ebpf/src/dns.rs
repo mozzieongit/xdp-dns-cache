@@ -22,6 +22,8 @@ pub struct DnsHdr {
 }
 
 impl DnsHdr {
+    pub const LEN: usize = core::mem::size_of::<DnsHdr>();
+
     pub fn id(&self) -> u16 {
         (self.id << 8) + (self.id >> 8)
     }

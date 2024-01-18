@@ -14,6 +14,18 @@ use network_types::{
 mod dns;
 use dns::DnsHdr;
 
+const MAX_SENSIBLE_LABEL_COUNT: u8 = 20;
+
+struct Cursor {
+    pos: usize,
+}
+
+impl Cursor {
+    fn new(pos: usize) -> Self {
+        Self { pos }
+    }
+}
+
 #[xdp]
 pub fn xdp_dns_cache(ctx: XdpContext) -> u32 {
     match try_xdp_dns_cache(ctx) {
@@ -91,8 +103,29 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
         }
     }
 
-    // let qname = parse_dname(&ctx)
-    // parse_query();
+    let mut cursor: Cursor =
+        Cursor::new(ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN);
+
+    let qname = parse_dname(&ctx, &mut cursor, dnshdr as usize)?;
+    info!(&ctx, "qname len: {}", qname.len());
+    let is_label = false;
+    let mut counter = 0;
+    let mut buf: [u8; 255] = [0; 255];
+    let mut len = 0;
+    for i in 0..255 {
+        if i >= qname.len() {
+            break;
+        }
+        if counter == 0 {
+            counter = qname[i];
+            buf[len] = b'.';
+        } else {
+            // info!(&ctx, "{}", qname[i].clone());
+            buf[len] = qname[i];
+            counter -= 1;
+        }
+        len += 1;
+    }
 
     let mut action = xdp_action::XDP_PASS;
 
@@ -112,6 +145,50 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
     }
 
     Ok(action)
+}
+
+fn parse_dname<'a>(
+    ctx: &'a XdpContext,
+    cursor: &mut Cursor,
+    dnshdr_start: usize
+) -> Result<&'a [u8], ()> {
+    let frame_start = ctx.data();
+    let frame_end = ctx.data_end();
+    let dname_start = cursor.pos;
+    for _i in 0..MAX_SENSIBLE_LABEL_COUNT {
+        if cursor.pos + 1 > frame_end {
+            return Err(());
+        }
+
+        let char: u8 = unsafe { u8::from_be(*(cursor.pos as *const u8)) };
+        info!(ctx, "{}", char);
+        if (char & 0xC0) == 0xC0 {
+            info!(ctx, "complabel");
+            // compression label, only back references allowed
+            if (char | 0x3F) as usize >= (dname_start - dnshdr_start) {
+                info!(ctx, "complabel_err");
+                return Err(());
+            }
+
+            // compression label would be the last label of dname
+            cursor.pos += 1;
+            break;
+        } else if (char & 0xC0) != 0 {
+            info!(ctx, "unknown label");
+            // unknown label type
+            return Err(());
+        }
+
+        cursor.pos += char as usize + 1;
+        info!(ctx, "check char");
+        if char == 0 {
+            info!(ctx, "char==0");
+            break;
+        }
+    }
+    let dname_len = cursor.pos - dname_start;
+    Ok(unsafe { core::slice::from_raw_parts(dname_start as *const u8, dname_len) })
+    // Ok(&[])
 }
 
 fn change_len_and_checksums(
