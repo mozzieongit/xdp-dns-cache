@@ -78,12 +78,25 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
         );
     }
 
+    unsafe {
+        let dnshdr: &DnsHdr = &*(dnshdr);
+        if dnshdr.qr() != 0
+            || dnshdr.qdcount() != 1
+            || dnshdr.ancount() != 0
+            || dnshdr.nscount() != 0
+            || dnshdr.arcount() > 1
+        {
+            info!(&ctx, "Aborting this message, the DNS query is bogus");
+            return Ok(xdp_action::XDP_ABORTED);
+        }
+    }
+
+    // let qname = parse_dname(&ctx)
     // parse_query();
 
     let mut action = xdp_action::XDP_PASS;
 
     // to not disrupt DNS on the dev system completely
-    // only include the match block in debug builds, not in release builds
     match source_addr {
         // source == 127.0.0.2 || 10.1.1.1
         0x7f000002 | 0x0a010101 => {
