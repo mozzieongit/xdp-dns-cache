@@ -3,7 +3,7 @@ use c2rust_bitfields::BitfieldStruct;
 #[repr(C, align(1))]
 #[derive(BitfieldStruct)]
 pub struct DnsHdr {
-    id: u16,
+    pub id: u16,
     #[bitfield(name = "qr", ty = "u8", bits = "7..=7")]
     #[bitfield(name = "opcode", ty = "u8", bits = "3..=6")]
     #[bitfield(name = "aa", ty = "u8", bits = "2..=2")]
@@ -15,10 +15,10 @@ pub struct DnsHdr {
     #[bitfield(name = "cd", ty = "u8", bits = "12..=12")]
     #[bitfield(name = "rcode", ty = "u8", bits = "8..=11")]
     codes_and_flags: [u8; 2],
-    qdcount: u16,
-    ancount: u16,
-    nscount: u16,
-    arcount: u16,
+    pub qdcount: u16,
+    pub ancount: u16,
+    pub nscount: u16,
+    pub arcount: u16,
 }
 
 impl DnsHdr {
