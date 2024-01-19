@@ -1,5 +1,9 @@
 use c2rust_bitfields::BitfieldStruct;
 
+pub const DNS_PORT: u16 = 53;
+pub const RR_TYPE_OPT: u16 = 41;
+pub const RCODE_REFUSED: u8 = 5;
+
 #[repr(C, align(1))]
 #[derive(BitfieldStruct)]
 pub struct DnsHdr {
@@ -64,10 +68,6 @@ impl DnsHdr {
         self.arcount = (count << 8) + (count >> 8)
     }
 }
-
-pub const DNS_PORT: u16 = 53;
-pub const RR_TYPE_OPT: u16 = 41;
-pub const RCODE_REFUSED: u8 = 5;
 
 #[repr(C)]
 pub struct DnsQrr {
