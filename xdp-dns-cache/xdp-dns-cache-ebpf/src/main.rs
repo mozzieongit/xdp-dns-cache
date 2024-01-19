@@ -106,25 +106,23 @@ fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
     let mut cursor: Cursor =
         Cursor::new(ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN);
 
+    let old_pos = ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
+
     let qname = parse_dname(&ctx, &mut cursor, dnshdr as usize)?;
     info!(&ctx, "qname len: {}", qname.len());
-    let is_label = false;
-    let mut counter = 0;
-    let mut buf: [u8; 255] = [0; 255];
-    let mut len = 0;
-    for i in 0..255 {
-        if i >= qname.len() {
-            break;
+
+    if qname.len() > 5 {
+        info!(&ctx, "is longer");
+        if old_pos + 5 < ctx.data_end() {
+            info!(&ctx, " {:x} {:x} {:x} {:x} {:x} {:x}", 
+                  qname[0],
+                  qname[1],
+                  qname[2],
+                  qname[3],
+                  qname[4],
+                  qname[5],
+                  );
         }
-        if counter == 0 {
-            counter = qname[i];
-            buf[len] = b'.';
-        } else {
-            // info!(&ctx, "{}", qname[i].clone());
-            buf[len] = qname[i];
-            counter -= 1;
-        }
-        len += 1;
     }
 
     let mut action = xdp_action::XDP_PASS;
