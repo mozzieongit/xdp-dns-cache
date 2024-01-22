@@ -203,7 +203,13 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
     // let len = 9; // com. / ...
     // let len = 10; // name. / ...
     // NOTE: we might be able to use a for loop (unrolled possibly) to reduce the amount of code
-    if ctx.data() + dnsdata_off + 10 < ctx.data_end() {
+    // TODO: maybe ignore the need for class and type in the bounds/numbers below?
+    if ctx.data() + dnsdata_off + 18 < ctx.data_end() {
+        // at least a query to nlnetlabs.nl. fits
+        if let Err(action) = parse_qname(&ctx, 14, &mut buf, &mut cursor) {
+            return action;
+        }
+    } else if ctx.data() + dnsdata_off + 10 < ctx.data_end() {
         // at least a query to name. fits
         if let Err(action) = parse_qname(&ctx, 6, &mut buf, &mut cursor) {
             return action;
@@ -230,7 +236,7 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
 
     unsafe {
         let s = core::str::from_utf8_unchecked(&buf);
-        info!(&ctx, "buf: {}", s);
+        info!(&ctx, "buf (unchecked utf8): {}", s);
     }
 
     unsafe {
