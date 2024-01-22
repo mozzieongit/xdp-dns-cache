@@ -175,16 +175,87 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
     let data_end = ctx.data_end();
     let metadata: &mut MetaData = unsafe { &mut *(ctx.metadata() as *mut MetaData) };
 
-    // if ctx.data() + (metadata.dname_offset as usize) > ctx.data_end() {}
-    let dnshdr_off = EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
+    if ctx.metadata() + mem::size_of::<MetaData>() > ctx.data() {
+        info!(&ctx, "we goofed with the metadata");
+        return xdp_action::XDP_PASS;
+    }
 
-    if ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN > ctx.data_end() {
-        info!(&ctx, "we goofed with the dname_offset. it's points outside of the frame");
+    let dnsdata_off: usize;
+    let v4_off = Ipv4Hdr::LEN + EthHdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
+    let v6_off = Ipv6Hdr::LEN + EthHdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
+    if metadata.dname_offset as usize == v4_off {
+        dnsdata_off = v4_off;
+    } else if metadata.dname_offset as usize == v6_off {
+        dnsdata_off = v6_off;
+    } else {
+        info!(&ctx, "ether_type doesn't match");
+        return xdp_action::XDP_PASS;
+    }
+
+    let mut cursor: Cursor = Cursor::new(ctx.data() + dnsdata_off);
+    let mut buf_index = 0;
+    let mut buf: [u8; 40] = [0; 40];
+
+    // if dns query is at least X bytes long
+    // let len = 4 + 1; // .
+    // let len = 4 + 1 + 3; // nl. / de. / ...
+    if ctx.data() + dnsdata_off + 8 < ctx.data_end() {
+        // at least a query to nl. fits
+        let mut label_bytes_left = 0;
+        for _i in 0..=4 {
+            // if cursor.pos + 1 > frame_end {
+            //     return Err(());
+            // }
+
+            let char: u8 = unsafe { *(cursor.pos as *const u8) };
+            info!(&ctx, "{}", char);
+            cursor.pos += 1;
+            if char == 0 {
+                info!(&ctx, "reached root label");
+                label_bytes_left = 0;
+                break;
+            }
+
+            if label_bytes_left == 0 {
+                if (char & 0xC0) == 0xC0 {
+                    info!(&ctx, "complabel");
+                    // compression label
+                    // not checking validity of reference
+                    // compression label would be the last label of dname
+                    cursor.pos += 1;
+                    break;
+                } else if (char & 0xC0) != 0 {
+                    info!(&ctx, "unknown label");
+                    return xdp_action::XDP_PASS;
+                } else {
+                    info!(&ctx, "label len: {}", char);
+                    label_bytes_left = char + 1; // +1 because of length itself
+                }
+            }
+
+            buf[buf_index] = char;
+            buf_index += 1;
+            label_bytes_left -= 1;
+        }
+
+        if label_bytes_left > 0 {
+            info!(&ctx, "label was not read appropriately");
+            return xdp_action::XDP_PASS;
+        }
+
+
+    } else if ctx.data() + dnsdata_off + 5 < ctx.data_end() {
+        // at least a query to . fits
+    } else {
+        info!(&ctx, "dns query not long enough");
         return xdp_action::XDP_ABORTED;
     }
 
+    info!(&ctx, "hello world");
+
     unsafe {
         let _ = JUMP_TABLE.tail_call(&ctx, XDP_CHECK_CACHE);
+        info!(&ctx, "tail call failed");
     }
     xdp_action::XDP_PASS
 }
