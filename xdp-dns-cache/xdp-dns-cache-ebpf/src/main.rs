@@ -71,6 +71,14 @@ fn do_ipv6(ctx: XdpContext) -> Result<u32, ()> {
 fn do_ipv4(ctx: XdpContext) -> Result<u32, ()> {
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
 
+    let source_addr = unsafe { u32::from_be((*ipv4hdr).src_addr) };
+
+    match source_addr {
+        // source == 127.0.0.2 || 10.1.1.1
+        0x7f000002 | 0x0a010101 => {}
+        _ => return Ok(xdp_action::XDP_PASS),
+    }
+
     // TODO: should we also check IPv4 IHL to verify that no options are used which would mess up
     // our arithmetics?
 
