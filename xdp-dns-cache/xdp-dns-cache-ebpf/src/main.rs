@@ -247,7 +247,12 @@ pub fn xdp_check_cache(ctx: XdpContext) -> u32 {
 }
 
 #[inline(always)]
-fn parse_qname(ctx: &XdpContext, max_bytes: usize, buf: &mut [u8], cursor: &mut Cursor) -> Result<(), u32> {
+fn parse_qname(
+    ctx: &XdpContext,
+    max_bytes: usize,
+    buf: &mut [u8],
+    cursor: &mut Cursor,
+) -> Result<(), u32> {
     let mut buf_index = 0;
     let mut label_bytes_left = 0;
     let mut reached_root_label = false;
