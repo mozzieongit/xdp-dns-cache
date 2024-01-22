@@ -228,7 +228,10 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
         return xdp_action::XDP_ABORTED;
     }
 
-    info!(&ctx, "hello world");
+    unsafe {
+        let s = core::str::from_utf8_unchecked(&buf);
+        info!(&ctx, "buf: {}", s);
+    }
 
     unsafe {
         let _ = JUMP_TABLE.tail_call(&ctx, XDP_CHECK_CACHE);
