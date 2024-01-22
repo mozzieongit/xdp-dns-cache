@@ -193,59 +193,33 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
     }
 
     let mut cursor: Cursor = Cursor::new(ctx.data() + dnsdata_off);
-    let mut buf_index = 0;
     let mut buf: [u8; 40] = [0; 40];
 
     // if dns query is at least X bytes long
-    // let len = 4 + 1; // .
-    // let len = 4 + 1 + 3; // nl. / de. / ...
-    if ctx.data() + dnsdata_off + 8 < ctx.data_end() {
+    // let len = 5; // .
+    // let len = 8; // nl. / de. / ...
+    // let len = 9; // com. / ...
+    // let len = 10; // name. / ...
+    if ctx.data() + dnsdata_off + 10 < ctx.data_end() {
+        // at least a query to name. fits
+        if let Err(action) = parse_qname(&ctx, 6, &mut buf, &mut cursor) {
+            return action;
+        }
+    } else if ctx.data() + dnsdata_off + 9 < ctx.data_end() {
+        // at least a query to com. fits
+        if let Err(action) = parse_qname(&ctx, 5, &mut buf, &mut cursor) {
+            return action;
+        }
+    } else if ctx.data() + dnsdata_off + 8 < ctx.data_end() {
         // at least a query to nl. fits
-        let mut label_bytes_left = 0;
-        for _i in 0..=4 {
-            // if cursor.pos + 1 > frame_end {
-            //     return Err(());
-            // }
-
-            let char: u8 = unsafe { *(cursor.pos as *const u8) };
-            info!(&ctx, "{}", char);
-            cursor.pos += 1;
-            if char == 0 {
-                info!(&ctx, "reached root label");
-                label_bytes_left = 0;
-                break;
-            }
-
-            if label_bytes_left == 0 {
-                if (char & 0xC0) == 0xC0 {
-                    info!(&ctx, "complabel");
-                    // compression label
-                    // not checking validity of reference
-                    // compression label would be the last label of dname
-                    cursor.pos += 1;
-                    break;
-                } else if (char & 0xC0) != 0 {
-                    info!(&ctx, "unknown label");
-                    return xdp_action::XDP_PASS;
-                } else {
-                    info!(&ctx, "label len: {}", char);
-                    label_bytes_left = char + 1; // +1 because of length itself
-                }
-            }
-
-            buf[buf_index] = char;
-            buf_index += 1;
-            label_bytes_left -= 1;
+        if let Err(action) = parse_qname(&ctx, 4, &mut buf, &mut cursor) {
+            return action;
         }
-
-        if label_bytes_left > 0 {
-            info!(&ctx, "label was not read appropriately");
-            return xdp_action::XDP_PASS;
-        }
-
-
     } else if ctx.data() + dnsdata_off + 5 < ctx.data_end() {
         // at least a query to . fits
+        if let Err(action) = parse_qname(&ctx, 1, &mut buf, &mut cursor) {
+            return action;
+        }
     } else {
         info!(&ctx, "dns query not long enough");
         return xdp_action::XDP_ABORTED;
@@ -264,4 +238,54 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
 pub fn xdp_check_cache(ctx: XdpContext) -> u32 {
     info!(&ctx, "Hello second tailcall :)");
     xdp_action::XDP_PASS
+}
+
+#[inline(always)]
+fn parse_qname(ctx: &XdpContext, max_bytes: usize, buf: &mut [u8], cursor: &mut Cursor) -> Result<(), u32> {
+    let mut buf_index = 0;
+    let mut label_bytes_left = 0;
+    let mut reached_root_label = false;
+    for _i in 0..=max_bytes {
+        // if cursor.pos + 1 > frame_end {
+        //     return Err(());
+        // }
+
+        let char: u8 = unsafe { *(cursor.pos as *const u8) };
+        info!(ctx, "{}", char);
+        cursor.pos += 1;
+        if char == 0 {
+            info!(ctx, "reached root label");
+            reached_root_label = true;
+            break;
+        }
+
+        if label_bytes_left == 0 {
+            if (char & 0xC0) == 0xC0 {
+                info!(ctx, "complabel");
+                // compression label
+                // not checking validity of reference
+                // compression label would be the last label of dname
+                cursor.pos += 1;
+                break;
+            } else if (char & 0xC0) != 0 {
+                info!(ctx, "unknown label");
+                return Err(xdp_action::XDP_PASS);
+            } else {
+                info!(ctx, "label len: {}", char);
+                label_bytes_left = char + 1; // +1 because of length itself
+            }
+        }
+
+        buf[buf_index] = char;
+        buf_index += 1;
+        label_bytes_left -= 1;
+    }
+
+    info!(ctx, "chars left: {}", label_bytes_left);
+    if !reached_root_label {
+        info!(ctx, "qname was not read appropriately");
+        return Err(xdp_action::XDP_PASS);
+    }
+
+    Ok(())
 }
