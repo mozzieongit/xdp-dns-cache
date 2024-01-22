@@ -29,6 +29,7 @@ use network_types::{
 };
 
 const MAX_SENSIBLE_LABEL_COUNT: u8 = 20;
+const CACHED_QNAME_SIZE: usize = 32;
 
 #[map(name = "JUMP_TABLE")]
 static mut JUMP_TABLE: ProgramArray = ProgramArray::with_max_entries(8, 0);
@@ -193,13 +194,15 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
     }
 
     let mut cursor: Cursor = Cursor::new(ctx.data() + dnsdata_off);
-    let mut buf: [u8; 40] = [0; 40];
+    let mut buf: [u8; CACHED_QNAME_SIZE] = [0; CACHED_QNAME_SIZE];
 
     // if dns query is at least X bytes long
     // let len = 5; // .
+    // // let len = 7; // no need to check for single character long TLDs (they don't exist)
     // let len = 8; // nl. / de. / ...
     // let len = 9; // com. / ...
     // let len = 10; // name. / ...
+    // NOTE: we might be able to use a for loop (unrolled possibly) to reduce the amount of code
     if ctx.data() + dnsdata_off + 10 < ctx.data_end() {
         // at least a query to name. fits
         if let Err(action) = parse_qname(&ctx, 6, &mut buf, &mut cursor) {
