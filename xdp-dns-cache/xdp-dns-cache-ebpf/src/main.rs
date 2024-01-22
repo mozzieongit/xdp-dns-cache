@@ -175,10 +175,13 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
     let data_end = ctx.data_end();
     let metadata: &mut MetaData = unsafe { &mut *(ctx.metadata() as *mut MetaData) };
 
-    // if ctx.data() + (metadata.dname_offset as usize) > ctx.data_end() {
-    // info!(&ctx, "we goofed with the dname_offset. it's points outside of the frame");
-    // return xdp_action::XDP_ABORTED;
-    // }
+    // if ctx.data() + (metadata.dname_offset as usize) > ctx.data_end() {}
+    let dnshdr_off = EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
+
+    if ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN + DnsHdr::LEN > ctx.data_end() {
+        info!(&ctx, "we goofed with the dname_offset. it's points outside of the frame");
+        return xdp_action::XDP_ABORTED;
+    }
 
     unsafe {
         let _ = JUMP_TABLE.tail_call(&ctx, XDP_CHECK_CACHE);
