@@ -189,13 +189,23 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
         return xdp_action::XDP_PASS;
     }
 
+    let proto: EtherType;
+    let dnshdr: &mut DnsHdr;
     let dnsdata_off: usize;
     let v4_off = Ipv4Hdr::LEN + EthHdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
     let v6_off = Ipv6Hdr::LEN + EthHdr::LEN + UdpHdr::LEN + DnsHdr::LEN;
     if metadata.dname_offset as usize == v4_off {
+        proto = EtherType::Ipv4;
         dnsdata_off = v4_off;
+        unsafe {
+            dnshdr = &mut *((ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN) as *mut DnsHdr)
+        }
     } else if metadata.dname_offset as usize == v6_off {
+        proto = EtherType::Ipv6;
         dnsdata_off = v6_off;
+        unsafe {
+            dnshdr = &mut *((ctx.data() + EthHdr::LEN + Ipv6Hdr::LEN + UdpHdr::LEN) as *mut DnsHdr)
+        }
     } else {
         info!(&ctx, "ether_type doesn't match");
         return xdp_action::XDP_PASS;
@@ -247,6 +257,93 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
         info!(&ctx, "buf (unchecked utf8): {}", s);
     }
 
+    if cursor.pos + 2 > ctx.data_end() {
+        info!(&ctx, "dns query not long enough");
+        return xdp_action::XDP_ABORTED;
+    }
+
+    let q_type: u16 = u16::from_be(unsafe { *(cursor.pos as *const u16) });
+    cursor.pos += 2;
+
+    if cursor.pos + 2 > ctx.data_end() {
+        info!(&ctx, "dns query not long enough");
+        return xdp_action::XDP_ABORTED;
+    }
+
+    let q_class: u16 = u16::from_be(unsafe { *(cursor.pos as *const u16) });
+    cursor.pos += 2;
+
+    info!(&ctx, "q_type: {}, class: {}", q_type, q_class);
+
+    // TODO: get answer from cache
+
+    if buf[0..4] == [0x02, 0x6e, 0x6c, 0x00] {
+        info!(&ctx, "yes it's for nl.");
+
+        match proto {
+            EtherType::Ipv6 => {
+                // if let Ok(ipv6hdr) = ptr_at_mut(&ctx, EthHdr::LEN) {
+                //     swap_ipv6_addr(ipv6hdr);
+                // }
+
+                // if let Ok(udphdr) = ptr_at_mut(&ctx, EthHdr::LEN + Ipv6Hdr::LEN) {
+                //     swap_udp_ports(udphdr);
+                // }
+            }
+            EtherType::Ipv4 => {
+                if let Ok(ipv4hdr) = ptr_at_mut(&ctx, EthHdr::LEN) {
+                    swap_ipv4_addr(ipv4hdr);
+                }
+
+                if let Ok(udphdr) = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN) {
+                    swap_udp_ports(udphdr);
+                }
+            }
+            _ => return xdp_action::XDP_PASS,
+        }
+
+        if let Ok(ethhdr) = ptr_at_mut(&ctx, 0) {
+            swap_eth_addr(ethhdr);
+        }
+
+        // dnshdr.set_tc(1);
+        dnshdr.set_qr(1);
+        dnshdr.set_ra(0);
+        dnshdr.set_nscount(3);
+        dnshdr.set_arcount(0);
+
+        // answer for nl. NS IN including compression
+        let ns_section: [u8; 58] = [
+            0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0xa3, 0x00, 0x00, 0x0a, 0x03, 0x6e,
+            0x73, 0x31, 0x03, 0x64, 0x6e, 0x73, 0xc0, 0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01,
+            0x00, 0x02, 0xa3, 0x00, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x33, 0xc0, 0x24, 0xc0, 0x0c,
+            0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0xa3, 0x00, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x34,
+            0xc0, 0x24,
+        ];
+
+        // ignore EDNS0 and just overwrite with answer
+        if cursor.pos + 58 < ctx.data_end() {
+            for i in 0..58 {
+                unsafe {
+                    *(cursor.pos as *mut u8) = ns_section[i];
+                    cursor.pos += 1;
+                }
+            }
+
+            // nullify the rest
+            for _i in 0..100 {
+                if cursor.pos < ctx.data_end() {
+                    unsafe {
+                        *(cursor.pos as *mut u8) = 0;
+                        cursor.pos += 1;
+                    }
+                }
+            }
+        } else {
+        }
+        return xdp_action::XDP_TX;
+    }
+
     unsafe {
         let _ = JUMP_TABLE.tail_call(&ctx, XDP_CHECK_CACHE);
         info!(&ctx, "tail call failed");
@@ -290,7 +387,6 @@ fn parse_qname(
                 // compression label
                 // not checking validity of reference
                 // compression label would be the last label of dname
-                cursor.pos += 1;
                 break;
             } else if (char & 0xC0) != 0 {
                 info!(ctx, "unknown label");
