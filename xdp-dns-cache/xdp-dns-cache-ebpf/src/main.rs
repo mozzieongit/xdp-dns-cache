@@ -45,6 +45,7 @@ const CACHED_QNAME_SIZE: usize = 32;
 #[map(name = "JUMP_TABLE")]
 static mut JUMP_TABLE: ProgramArray = ProgramArray::with_max_entries(8, 0);
 
+#[allow(dead_code)]
 const XDP_DNS_CACHE: u32 = 0;
 const XDP_PARSE_DNAME: u32 = 1;
 const XDP_CHECK_CACHE: u32 = 2;

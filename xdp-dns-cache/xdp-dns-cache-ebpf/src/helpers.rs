@@ -59,6 +59,7 @@ pub fn ptr_at_mut<T>(ctx: &XdpContext, offset: usize) -> Result<*mut T, ()> {
     Ok((start + offset) as *mut T)
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn csum_replace_u32(mut check: u16, old: u32, new: u32) -> u16 {
     check = csum_replace(check, (old >> 16) as u16, (new >> 16) as u16);
