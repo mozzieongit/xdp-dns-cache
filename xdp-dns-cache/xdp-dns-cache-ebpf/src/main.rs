@@ -340,6 +340,68 @@ pub fn xdp_parse_dname(ctx: XdpContext) -> u32 {
                 }
             }
         } else {
+            let delta = ctx.data_end() - cursor.pos;
+            info!(&ctx, "nope: {}", delta);
+            match proto {
+                EtherType::Ipv6 => {
+                    // let ipv6hdr = ptr_at_mut(&ctx, EthHdr::LEN);
+                    // let udphdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv6Hdr::LEN);
+
+                    // if ipv6hdr.is_ok() && udphdr.is_ok() {
+                    //     change_len_and_checksums_v6(ctx, ipv6hdr, udphdr)?;
+                    // }
+                    return xdp_action::XDP_ABORTED;
+                }
+                EtherType::Ipv4 => {
+                    let cursor_offset;
+                    if cursor.pos > ctx.data() && cursor.pos < ctx.data_end() {
+                        cursor_offset = cursor.pos - ctx.data();
+                    } else {
+                        return xdp_action::XDP_ABORTED;
+                    }
+                    let ipv4hdr = ptr_at_mut(&ctx, EthHdr::LEN);
+                    let udphdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN);
+
+                    if ipv4hdr.is_ok() && udphdr.is_ok() {
+                        // if let Ok(a) = change_len_and_checksums_v4(&ctx, ipv4hdr.unwrap(), udphdr.unwrap(), delta as u16) {}
+                        if let Ok(a) = change_len_and_checksums_v4(
+                            &ctx,
+                            ipv4hdr.unwrap(),
+                            udphdr.unwrap(),
+                            58 as u16,
+                        ) {
+                            // yay
+                            // TODO: tailcall here?
+                            // math between pkt pointer and register without bounded min val..
+                            // if c_offset > 0 && ctx.data() + c_offset < ctx.data_end()
+                            // if ctx.data_end() - ctx.data() > cursor_offset {
+                            //     let mut cursor = Cursor::new(ctx.data() + cursor_offset);
+
+                            //     info!(&ctx, "aaaaa");
+                            //     if cursor.pos > ctx.data() && cursor.pos < ctx.data_end() {
+                            //         // if ctx.data_end() - cursor.pos < 58 {
+                            //             info!(&ctx, "aaaaa");
+                            //             //     // for i in 0..58 {
+                            //             //     let _ = "";
+                            //             //         unsafe {
+                            //             //             // let byte = cursor.pos as *mut u8;
+                            //             //             // *byte = ns_section[0];
+                            //             //             // cursor.pos += 1;
+                            //             //             // info!(&ctx, "aaaaa");
+                            //             //         }
+                            //             //     // }
+                            //         // }
+                            //     }
+                            // } else {
+                            //     return xdp_action::XDP_ABORTED;
+                            // }
+                        } else {
+                            return xdp_action::XDP_ABORTED;
+                        }
+                    }
+                }
+                _ => return xdp_action::XDP_ABORTED,
+            }
         }
         return xdp_action::XDP_TX;
     }

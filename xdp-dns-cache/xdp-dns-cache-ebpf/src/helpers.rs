@@ -84,7 +84,7 @@ pub fn change_len_and_checksums_v4(
     csum = csum_replace(csum, orig_ipv4_len, ipv4_len_new);
 
     unsafe {
-        aya_log_ebpf::info!(
+        info!(
             ctx,
             "ctx.len: {} + delta = {} || ipv4 len before: {}, ipv4 len after: {}, delta: {}",
             orig_frame_size,
