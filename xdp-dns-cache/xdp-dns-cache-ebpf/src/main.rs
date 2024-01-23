@@ -29,7 +29,10 @@ use network_types::{
 };
 
 // make a simple wrapper around aya_log_ebpf::info to only include it if the cfg flag
-// "include_info" is set: i.e. $ RUSTFLAGS="--cfg include_info" cargo build
+// "include_info" is set: i.e. $ RUSTFLAGS="--cfg include_info" cargo xtask build-ebpf
+// This is necessary as different kernels have different limits and including logging adds
+// many many instructions to the resulting BPF bytecode. This allows disabling logging at
+// compile-time without going through the code to delete every logging statement.
 macro_rules! info {
     ($($arg:tt)*) => {
         #[cfg(include_info)]
