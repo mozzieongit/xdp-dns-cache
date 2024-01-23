@@ -1,4 +1,4 @@
-use aya_bpf::{programs::XdpContext, helpers::bpf_xdp_adjust_tail, bindings::xdp_action};
+use aya_bpf::{bindings::xdp_action, helpers::bpf_xdp_adjust_tail, programs::XdpContext};
 use aya_log_ebpf::info;
 use core::mem;
 use network_types::{eth::EthHdr, ip::Ipv4Hdr, udp::UdpHdr};
@@ -105,10 +105,7 @@ pub fn change_len_and_checksums_v4(
     // using adjust_tail invalidates all boundschecks priviously done, so this
     // has to go below the address swaps
     if unsafe { bpf_xdp_adjust_tail(ctx.ctx, delta.into()) } != 0 {
-        info!(
-            ctx,
-            "adjust_tail failed for tail delta: {}", delta
-        );
+        info!(ctx, "adjust_tail failed for tail delta: {}", delta);
     }
 
     Ok(xdp_action::XDP_PASS)
