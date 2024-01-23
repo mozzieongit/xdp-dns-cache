@@ -25,61 +25,47 @@ pub struct DnsHdr {
     pub arcount: u16,
 }
 
+#[allow(dead_code)]
 impl DnsHdr {
     pub const LEN: usize = core::mem::size_of::<DnsHdr>();
 
     pub fn id(&self) -> u16 {
-        (self.id << 8) + (self.id >> 8)
+        u16::from_be(self.id)
     }
 
     pub fn qdcount(&self) -> u16 {
-        (self.qdcount << 8) + (self.qdcount >> 8)
+        u16::from_be(self.qdcount)
     }
 
     pub fn ancount(&self) -> u16 {
-        (self.ancount << 8) + (self.ancount >> 8)
+        u16::from_be(self.ancount)
     }
 
     pub fn nscount(&self) -> u16 {
-        (self.nscount << 8) + (self.nscount >> 8)
+        u16::from_be(self.nscount)
     }
 
     pub fn arcount(&self) -> u16 {
-        (self.arcount << 8) + (self.arcount >> 8)
+        u16::from_be(self.arcount)
     }
 
     pub fn set_id(&mut self, id: u16) {
-        self.id = (id << 8) + (id >> 8)
+        self.id = u16::to_be(id)
     }
 
     pub fn set_qdcount(&mut self, count: u16) {
-        self.qdcount = (count << 8) + (count >> 8)
+        self.qdcount = u16::to_be(count)
     }
 
     pub fn set_ancount(&mut self, count: u16) {
-        self.ancount = (count << 8) + (count >> 8)
+        self.ancount = u16::to_be(count)
     }
 
     pub fn set_nscount(&mut self, count: u16) {
-        self.nscount = (count << 8) + (count >> 8)
+        self.nscount = u16::to_be(count)
     }
 
     pub fn set_arcount(&mut self, count: u16) {
-        self.arcount = (count << 8) + (count >> 8)
+        self.arcount = u16::to_be(count)
     }
-}
-
-#[repr(C)]
-pub struct DnsQrr {
-    qtype: u16,
-    qclass: u16
-}
-
-// #[repr(C, packed)] // packed?
-#[repr(C)]
-pub struct DnsRr {
-    rr_type: u16,
-    class: u16,
-    ttl: u32,
-    rdata_len: u16
 }

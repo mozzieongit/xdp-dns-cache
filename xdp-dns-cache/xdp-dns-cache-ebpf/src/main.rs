@@ -6,7 +6,6 @@ use core::mem;
 mod dns;
 use dns::*;
 mod csum;
-use csum::*;
 mod helpers;
 use helpers::*;
 mod cursor;
@@ -21,7 +20,6 @@ use aya_bpf::{
     maps::ProgramArray,
     programs::XdpContext,
 };
-use aya_log_ebpf;
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr, Ipv6Hdr},
