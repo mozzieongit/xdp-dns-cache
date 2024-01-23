@@ -1,6 +1,6 @@
 use anyhow::Context;
 use aya::maps::ProgramArray;
-use aya::programs::{Xdp, XdpFlags, ProgramFd};
+use aya::programs::{Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
 use clap::Parser;
