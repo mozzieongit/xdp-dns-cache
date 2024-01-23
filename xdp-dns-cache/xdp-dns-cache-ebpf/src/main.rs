@@ -21,12 +21,23 @@ use aya_bpf::{
     maps::ProgramArray,
     programs::XdpContext,
 };
-use aya_log_ebpf::info;
+use aya_log_ebpf;
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr, Ipv6Hdr},
     udp::UdpHdr,
 };
+
+// make a simple wrapper around aya_log_ebpf::info to only include it if the cfg flag
+// "include_info" is set: i.e. $ RUSTFLAGS="--cfg include_info" cargo build
+macro_rules! info {
+    ($($arg:tt)*) => {
+        #[cfg(include_info)]
+        {
+            aya_log_ebpf::info!($($arg)*);
+        }
+    };
+}
 
 const MAX_SENSIBLE_LABEL_COUNT: u8 = 20;
 const CACHED_QNAME_SIZE: usize = 32;
