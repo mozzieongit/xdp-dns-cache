@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use c2rust_bitfields::BitfieldStruct;
 
 pub const DNS_PORT: u16 = 53;
@@ -25,7 +26,6 @@ pub struct DnsHdr {
     pub arcount: u16,
 }
 
-#[allow(dead_code)]
 impl DnsHdr {
     pub const LEN: usize = core::mem::size_of::<DnsHdr>();
 
